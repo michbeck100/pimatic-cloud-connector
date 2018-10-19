@@ -79,7 +79,6 @@ module.exports = (env) =>
       return @_isDimmer(device) || @_isSwitch(device) || @_isHeating(device)
 
     _isDimmer: (device) =>
-
       return device.template in @dimmerTemplates
 
     _isSwitch: (device) =>
@@ -108,35 +107,36 @@ module.exports = (env) =>
         env.logger.info('Disconnected from pimatic cloud')
       )
       socket.on('error', (error) =>
-        env.logger.info("Error on socket connection: #{error}")
+        env.logger.error("Error on socket connection: #{error}")
       )
-      socket.on('request', (data) =>
-        env.logger.info("request: #{JSON.stringify(data)}")
-        if data.path.indexOf('/api/') == 0
-          env.logger.debug("calling #{data.path}")
+      socket.on('request', (request) =>
+        #env.logger.debug("request: #{JSON.stringify(request)}")
+        if request.path.indexOf('/api/device') == 0
+          env.logger.debug("calling #{request.path}")
           options = {
             port: @framework.config.settings.httpServer.port,
-            path: data.path,
-            auth: "admin:admin"
+            path: request.path
           }
-          http.get(options, (res) =>
-            res.setEncoding('utf8')
+          options.auth = @_authentication()
+          http.get(options, (response) =>
+            response.setEncoding('utf8')
             rawData = ''
-            res.on('data', (chunk) =>
+            response.on('data', (chunk) =>
               rawData += chunk
             )
-            res.on('end', () =>
+            response.on('end', () =>
               parsedData = JSON.parse(rawData)
+              #env.logger.debug("response from pimatic: #{JSON.stringify(parsedData)}")
               socket.emit('responseContentBinary', {
-                id: data.id,
+                id: request.id,
                 body: new Buffer(JSON.stringify(parsedData))
               })
               socket.emit('responseFinished', {
-                id: data.id
+                id: request.id
               })
-              env.logger.debug("response from pimatic: #{JSON.stringify(parsedData)}")
             )
           )
+        else env.logger.warn("unexpected call to #{request.path}")
       )
       socket.on('cancel', (data) =>
         env.logger.info("cancel: #{data}")
@@ -150,5 +150,10 @@ module.exports = (env) =>
     _randomString: () =>
       length = 20
       return Math.round((Math.pow(36, length + 1) - Math.random() * Math.pow(36, length))).toString(36).slice(1)
+
+    _authentication: () =>
+      if @framework.config.users?.length
+        return @framework.config.users[0].username + ":" + @framework.config.users[0].password
+      throw new Error("No authentication information found. Please provide at least one user in your config.")
 
   return new CloudConnectorPlugin()
